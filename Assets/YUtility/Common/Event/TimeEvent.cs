@@ -43,7 +43,7 @@ namespace YUtility.Common.Event {
         /// </summary>
         /// <param name="t">触发时间间隔</param>
         /// <param name="over_de">触发事件</param>
-        /// <param name="c">触发次数</param>
+        /// <param name="c">触发次数（小于0表示循环执行）</param>
         /// <param name="n">是否立即执行</param>
         /// <param name="up_De">每帧调用事件</param>
         public TimeEvent(float t, Action over_de, Action<float, float> up_De = null, int c = 1, bool n = false) {
@@ -63,7 +63,7 @@ namespace YUtility.Common.Event {
         /// <param name="t">触发时间间隔</param>
         /// <param name="over_de">触发事件</param>
         /// <param name="ignoreTime">忽略时间缩放</param>
-        /// <param name="c">触发次数</param>
+        /// <param name="c">触发次数（小于0表示循环执行）</param>
         /// <param name="n">是否立即执行</param>
         /// <param name="up_De">每帧调用事件</param>
         public TimeEvent(float t, Action over_de, bool ignoreTime, Action<float, float> up_De = null, int c = 1, bool n = false) {

@@ -1,6 +1,7 @@
 ﻿using System;
 using System.Collections;
 using System.Collections.Generic;
+using System.IO;
 using UnityEngine;
 using UnityEngine.SceneManagement;
 using YUtility.Common;
@@ -28,7 +29,7 @@ namespace YUtility.Tools.ObjPool {
             //Debug.Log(obj.GetPoolName());
         }
 
-        public GameObject GetResObj(string path) {
+        public void GetResObj(string path,Action<GameObject> cb) {
 
             string[] names = path.Split('/');
             string name = names[names.Length - 1];
@@ -36,20 +37,19 @@ namespace YUtility.Tools.ObjPool {
                 //Debug.Log("get "+name+"  "+nameToPool[name].Count);
                 GameObject obj = nameToPool[name].Dequeue();
                 obj.GetComponent<IPoolReset>().Reset();
-                return obj;
+                cb(obj);
             }
             else {
-                GameObject ga = ResMgr.Ins.GetResAsset<GameObject>(path);
-                ga = Instantiate(ga);
-                ga.SetActive(false);
-                ga.GetComponent<IPoolReset>().SetPoolName(name);
-                if (!nameToPool.ContainsKey(name)) {
-                    nameToPool.Add(name, new Queue<GameObject>());
-                }
-                //Debug.Log("reload    " + name + "  " + nameToPool[name].Count);
-                return ga;
+                string dirName = Path.GetDirectoryName(path);
+                ResMgr.Ins.GetAsset<GameObject>(dirName, name, (obj) => {
+                    obj.SetActive(false);
+                    obj.GetComponent<IPoolReset>().SetPoolName(name);
+                    if (!nameToPool.ContainsKey(name)) {
+                        nameToPool.Add(name, new Queue<GameObject>());
+                    }
+                    cb(obj);
+                });
             }
-
         }
 
         //public GameObject GetAssetObj(string abName, string assetName) {

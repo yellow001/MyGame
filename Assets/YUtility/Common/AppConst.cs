@@ -1,6 +1,7 @@
 ﻿using System;
 using System.Collections;
 using System.Collections.Generic;
+using UnityEditor;
 using UnityEngine;
 
 public class AppConst{
@@ -25,6 +26,11 @@ public class AppConst{
 
 
     public string GetValue(string name) {
+
+#if UNITY_EDITOR
+        ReloadSetting();
+#endif
+
         if (Ins.Settings.ContainsKey(name)) {
             return Ins.Settings[name];
         }
@@ -34,7 +40,42 @@ public class AppConst{
         }
     }
 
+    public int GetIntValue(string name) {
+
+#if UNITY_EDITOR
+        ReloadSetting();
+#endif
+        try {
+            if (Ins.Settings.ContainsKey(name)) {
+                return int.Parse(Ins.Settings[name]);
+            }
+            else {
+                return 0;
+            }
+        }
+        catch (Exception ex) {
+            return 0;
+        }
+    }
+
     void InitSetting() {
+        try {
+            string content = Resources.Load<TextAsset>("AppSetting").text;
+            string[] settings = content.Split(new string[] { "\r\n" }, StringSplitOptions.RemoveEmptyEntries);
+            foreach (var item in settings) {
+                if (item.StartsWith("//")) { continue; }
+                string[] item2 = item.Split(new string[] { "::" }, StringSplitOptions.RemoveEmptyEntries);
+                if (item2.Length == 2) {
+                    Settings.Add(item2[0], item2[1]);
+                }
+            }
+        }
+        catch (Exception ex) {
+            Debug.Log(ex.ToString());
+        }
+    }
+
+    void ReloadSetting() {
         try {
             string content = Resources.Load<TextAsset>("AppSetting").text;
             string[] settings = content.Split(new string[] { "\r\n" }, StringSplitOptions.RemoveEmptyEntries);
@@ -43,12 +84,12 @@ public class AppConst{
 
                 string[] item2 = item.Split(new string[] { "::" }, StringSplitOptions.RemoveEmptyEntries);
                 if (item2.Length == 2) {
-                    Settings.Add(item2[0], item2[1]);
+                    Settings[item2[0]]=item2[1];
                 }
             }
         }
         catch (Exception ex) {
-            throw ex;
+            Debug.Log(ex.ToString());
         }
     }
 }

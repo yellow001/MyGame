@@ -3,16 +3,18 @@ using System.Collections.Generic;
 using System.Linq;
 using UnityEngine;
 using YUtility.Common.ResLoad;
+using YUtility.Data;
+using YUtility.Data.Config;
 
 namespace YUtility.Tools.Localization {
     public class LocalizationMgr {
         static LocalizationMgr ins;
-        static List<string> languageType = new List<string>();
-        static List<string> allKeys = new List<string>();
-        static string currentLanguage;
-        static Dictionary<string, Dictionary<string, string>> languageDic = new Dictionary<string, Dictionary<string, string>>();
+        
+        Dictionary<string, string> languageDic = new Dictionary<string, string>();
+        List<string> languageKeys = new List<string>();
 
         public System.Action changeAction;
+        public string currentLanguage;
 
         public static LocalizationMgr Ins {
             get {
@@ -28,58 +30,57 @@ namespace YUtility.Tools.Localization {
         }
 
         void Init() {
-            string localizationTx = "";
-
-#if UNITY_EDITOR
-            localizationTx = ResMgr.Ins.GetResAsset<TextAsset>("Localization/localization").text;
-#else
-        localizationTx = ResMgr.Ins.LoadText("Localization/localization.txt");
-#endif
-            ReadTx(localizationTx);
+            currentLanguage = PlayerPrefs.GetString("Language","chinese");
+            ReadTx(currentLanguage, null);
         }
 
-        void ReadTx(string tx) {
-            languageType.Clear();
+        void ReadTx(string key,System.Action cb) {
             languageDic.Clear();
 
-            string[] allLines = tx.Split(new string[] { "\r\n" }, System.StringSplitOptions.RemoveEmptyEntries);
-            string[] langKeys = allLines[0].Split(';');
-            for (int i = 1; i < langKeys.Length; i++) {
-                languageDic.Add(langKeys[i], new Dictionary<string, string>());
-            }
-            languageType.AddRange(languageDic.Keys.ToList());
-            currentLanguage = PlayerPrefs.GetString("Language", languageType[0]);
+            ResMgr.Ins.GetAsset<TextAsset>("Localization", key, (tx) => {
 
-            for (int j = 1; j < allLines.Length; j++) {
-                string[] allpart = allLines[j].Split(';');
-                for (int k = 0; k < languageType.Count; k++) {
-                    allKeys.Add(allpart[0]);
-                    languageDic[languageType[k]].Add(allpart[0], allpart[k + 1]);
+                if (tx == null) {
+                    Debug.Log("localization for " + key + " is null");
+                    return;
                 }
-            }
+
+                string[] allLines = tx.text.Split(new string[] { "\r\n" }, System.StringSplitOptions.RemoveEmptyEntries);
+
+                string[] allKeys = allLines[0].Split(new char[] { ',' }, System.StringSplitOptions.RemoveEmptyEntries);
+                languageKeys.AddRange(allKeys);
+
+                for (int j = 1; j < allLines.Length; j++) {
+
+                    if (allLines[j].StartsWith("//")) { continue; }
+
+                    string[] allpart = allLines[j].Split(new char[] { ',' }, 2);
+                    if (allpart.Length > 1) {
+                        languageDic[allpart[0]] = allpart[1];
+                    }
+                }
+
+                if (cb != null) {
+                    cb();
+                }
+
+            }, false);
         }
 
         public string Get(string key) {
-            if (languageDic[currentLanguage].ContainsKey(key)) {
-                return languageDic[currentLanguage][key];
+            if (languageDic.ContainsKey(key)) {
+                return languageDic[key];
             }
             return key;
         }
 
         public void ChangeLanguage(string key) {
-            if (!languageType.Contains(key)) {
-                Debug.Log(string.Format("the language {0} is not contain", key));
-                return;
-            }
             PlayerPrefs.SetString("Language", key);
             currentLanguage = key;
-            if (changeAction != null) {
-                changeAction();
-            }
+            ReadTx(currentLanguage,changeAction);
         }
 
-        public string[] GetLanguageList() {
-            return languageType.ToArray();
+        public List<string> GetAllLanguageKeys() {
+            return languageKeys;
         }
     }
 }

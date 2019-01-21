@@ -1,151 +1,341 @@
-﻿using System;
-using System.Collections;
+﻿using System.Collections;
 using System.Collections.Generic;
-using System.IO;
+using System.Linq;
 using UnityEngine;
 using UnityEngine.SceneManagement;
+using YUtility.Common.Extend;
+using YUtility.Common.Util;
+using YUtility.Data;
+using YUtility.Data.Config;
 
 namespace YUtility.Common.ResLoad {
+
     public class ResMgr : Singleton<ResMgr> {
-
-        LoadMode loadMode = LoadMode.Resources;
-
-        /// <summary>
-        /// 已经加载的AB包
-        /// </summary>
-        public static Dictionary<string, AssetBundle> loadedAssets;
-
-        /// <summary>
-        /// 某资源对应的依赖项
-        /// </summary>
-        public static Dictionary<string, string[]> assetDepends;
-
-        public static Dictionary<string, UnityEngine.Object> resAssets;
-
-        static bool isInit = false;
+        #region 内部变量
+        EM_LoadMode loadMode = EM_LoadMode.Resources;
+        AssetBundleManifest manifest;
+        List<string> allAssetList = new List<string>();
+        Dictionary<string, AssetBundleItem> abLoadedDic = new Dictionary<string, AssetBundleItem>();
+        int maxAssetBundleCount = 25;
+        bool loading = false;
+        #endregion
 
         public override void Init() {
-            if (isInit) { return; }
-            loadMode =(LoadMode)(int.Parse(AppConst.Ins.GetValue("AssetLoadMode")));
 
-            if (loadMode == LoadMode.AssetBundle) {
+            loadMode = (EM_LoadMode)(AppConst.Ins.GetIntValue("AssetLoadMode"));
+            maxAssetBundleCount = AppConst.Ins.GetIntValue("MaxAssetBundleCount");
+
+            if (loadMode == EM_LoadMode.AssetBundle) {
                 //load manifest
-                AssetBundle manifestFile = AssetBundle.LoadFromFile(GetAssetPath() + "/StreamingAssets");
-                AssetBundleManifest manifest = manifestFile.LoadAsset<AssetBundleManifest>("AssetBundleManifest");
-
-                string[] abs = manifest.GetAllAssetBundles();
-
-                foreach (string item in abs) {
-                    assetDepends.Add(item, manifest.GetAllDependencies(item));
-                }
+                AssetBundle manifestFile = AssetBundle.LoadFromFile(PathHelper.AssetBundlePath + "/StreamingAssets");
+                manifest = manifestFile.LoadAsset<AssetBundleManifest>("AssetBundleManifest");
+                allAssetList.AddRange(manifest.GetAllAssetBundles());
+                manifestFile.Unload(false);
             }
 
             SceneManager.sceneUnloaded += OnSecneUnload;
 
+            this.AddTimeEvent(10, () => CheckAndReleaseAssetBundle(), null, false, -1);
+
             base.Init();
         }
 
-        private void OnSecneUnload(Scene arg0) {
-            //Clear();
-            //Resources.UnloadUnusedAssets();
+        void OnSecneUnload(Scene arg0) {
+            Clear();
         }
 
         /// <summary>
-        /// 通过resources获取资源
+        /// 加载资源
+        /// </summary>
+        /// <typeparam name="T"></typeparam>
+        /// <param name="resID">AB名/文件夹路径id</param>
+        /// <param name="assetName">资源名/文件名</param>
+        /// <param name="callBack">加载回调</param>
+        /// <param name="isAsync">是否异步加载</param>
+        public void GetAsset<T>(int resID, string assetName, System.Action<T> callBack, bool isAsync = true) where T : Object {
+
+            string abName = DBMgr.Ins.GetConfgDB<DBResPathCfg>().F_GetResPath(resID);
+
+            GetAsset(abName, assetName, callBack, isAsync);
+        }
+
+        /// <summary>
+        /// 加载资源
+        /// </summary>
+        /// <typeparam name="T"></typeparam>
+        /// <param name="abName">AB名/文件夹路径</param>
+        /// <param name="assetName">资源名/文件名</param>
+        /// <param name="callBack">加载回调</param>
+        /// <param name="isAsync">是否异步加载</param>
+        public void GetAsset<T>(string abName, string assetName, System.Action<T> callBack, bool isAsync = true) where T:Object{
+            if (loadMode == EM_LoadMode.AssetBundle) {
+                GetABAsset(abName, assetName, callBack, isAsync);
+            }
+            else {
+                GetResAsset(abName, assetName, callBack, isAsync);
+            }
+        }
+
+        #region AssetBundle
+        /// <summary>
+        /// 获取AB资源的统一入口
+        /// </summary>
+        /// <typeparam name="T"></typeparam>
+        /// <param name="abName">AB名</param>
+        /// <param name="assetName">资源名</param>
+        /// <param name="callBack">加载回调</param>
+        /// <param name="isAsync">是否异步加载</param>
+        void GetABAsset<T>(string abName, string assetName, System.Action<T> callBack,bool isAsync=true) where T : UnityEngine.Object{
+            if (isAsync) {
+                LoadABAssetAsync(abName, assetName, callBack);
+            }
+            else {
+                if (callBack != null) {
+                    callBack(LoadABAsset<T>(abName, assetName));
+                }
+            }
+        }
+
+        /// <summary>
+        /// 通过AssetBundle加载资源
+        /// </summary>
+        /// <typeparam name="T"></typeparam>
+        /// <param name="abName"></param>
+        /// <param name="assetName"></param>
+        /// <returns></returns>
+        T LoadABAsset<T>(string abName, string assetName) where T : UnityEngine.Object {
+            abName = abName.ToLower();
+            assetName = assetName.ToLower();
+
+            if (abLoadedDic.ContainsKey(abName) && abLoadedDic[abName].IsAssetLoaded<T>(assetName)) {
+                return abLoadedDic[abName].LoadAsset<T>(assetName);
+            }
+
+            if (!LoadAssetBundle(abName)) {
+                return null;
+            }
+
+            return abLoadedDic[abName].LoadAsset<T>(assetName);
+        }
+
+        /// <summary>
+        /// 通过AssetBundle异步加载资源
+        /// </summary>
+        /// <typeparam name="T"></typeparam>
+        /// <param name="abName"></param>
+        /// <param name="assetName"></param>
+        /// <returns></returns>
+        void LoadABAssetAsync<T>(string abName, string assetName,System.Action<T> callBack) where T : UnityEngine.Object {
+            abName = abName.ToLower();
+            assetName = assetName.ToLower();
+
+            if (abLoadedDic.ContainsKey(abName) && abLoadedDic[abName].IsAssetLoaded<T>(assetName)) {
+                callBack(abLoadedDic[abName].LoadAsset<T>(assetName));
+            }
+            else {
+                StartCoroutine(LoadAssetAsync(abName, assetName, callBack));
+            }
+        }
+
+        /// <summary>
+        /// 异步加载AB
+        /// </summary>
+        /// <typeparam name="T"></typeparam>
+        /// <param name="abName"></param>
+        /// <param name="assetName"></param>
+        /// <param name="cb"></param>
+        /// <returns></returns>
+        IEnumerator LoadAssetAsync<T>(string abName,string assetName,System.Action<T> cb)where T:Object {
+            //AB是否已加载
+            if (!abLoadedDic.ContainsKey(abName)) {//如果还没加载
+                //先加载依赖项
+                foreach (string item in manifest.GetAllDependencies(abName)) {
+                    yield return LoadAssetAsync<T>(item,null, null);
+                }
+                //加载AB
+                AssetBundleCreateRequest request = AssetBundle.LoadFromFileAsync(PathHelper.AssetBundlePath + "/" + abName);
+
+                while (!request.isDone) {
+                    yield return new WaitForSeconds(0.15f);
+                }
+
+                AssetBundleItem abItem = new AssetBundleItem(abName, request.assetBundle, manifest.GetAllDependencies(abName));
+                abLoadedDic.Add(abName, abItem);
+            }
+            else {
+                //AB内存已释放
+                if (abLoadedDic[abName].V_AssetBundle == null) {
+                    //先加载依赖项
+                    foreach (string item in manifest.GetAllDependencies(abName)) {
+                        yield return LoadAssetAsync<T>(item,null, null);
+                    }
+                    //加载AB
+                    AssetBundleCreateRequest request = AssetBundle.LoadFromFileAsync(PathHelper.AssetBundlePath + "/" + abName);
+
+                    yield return request;
+
+                    if (request.assetBundle != null) {
+                        abLoadedDic[abName].V_AssetBundle = request.assetBundle;
+                    }
+                }
+            }
+
+            if (!string.IsNullOrEmpty(assetName) && cb != null) {
+                StartCoroutine(abLoadedDic[abName].LoadAssetAsync<T>(assetName, cb));
+            }
+        }
+
+        /// <summary>
+        /// 加载AB
+        /// </summary>
+        /// <param name="abName"></param>
+        /// <returns></returns>
+        bool LoadAssetBundle(string abName) {
+            //AB是否已加载
+            if (!abLoadedDic.ContainsKey(abName)) {//如果还没加载
+                //先加载依赖项
+                foreach (string item in manifest.GetAllDependencies(abName)) {
+                    if (!LoadAssetBundle(item)) {
+                        return false;
+                    }
+                }
+                //加载AB
+                AssetBundle ab = AssetBundle.LoadFromFile(PathHelper.AssetBundlePath + "/" + abName);
+                AssetBundleItem abItem = new AssetBundleItem(abName, ab, manifest.GetAllDependencies(abName));
+                abLoadedDic.Add(abName, abItem);
+                return true;
+            }
+            else {
+                //AB内存已释放
+                if (abLoadedDic[abName].V_AssetBundle == null) {
+                    //先加载依赖项
+                    foreach (string item in manifest.GetAllDependencies(abName)) {
+                        if (!LoadAssetBundle(item)) {
+                            return false;
+                        }
+                    }
+                    //加载AB
+                    AssetBundle ab = AssetBundle.LoadFromFile(PathHelper.AssetBundlePath + "/" + abName);
+                    abLoadedDic[abName].V_AssetBundle = ab;
+                    return true;
+                }
+                else {
+                    //AB内存未释放
+                    return true;
+                }
+            }
+        }
+
+        #endregion
+
+        #region Resources
+        /// <summary>
+        /// 获取Res资源的统一入口
+        /// </summary>
+        /// <typeparam name="T"></typeparam>
+        /// <param name="abName"></param>
+        /// <param name="assetName"></param>
+        /// <param name="callBack"></param>
+        /// <param name="isAsync"></param>
+        void GetResAsset<T>(string abName, string assetName, System.Action<T> callBack, bool isAsync = true) where T:Object {
+            if (isAsync) {
+                StartCoroutine(LoadResAssetAsync(abName + "/" + assetName, callBack));
+            }
+            else {
+                callBack(LoadResAsset<T>(abName + "/" + assetName));
+            }
+        }
+
+        /// <summary>
+        /// 加载Res资源
         /// </summary>
         /// <typeparam name="T"></typeparam>
         /// <param name="path"></param>
         /// <returns></returns>
-        public T GetResAsset<T>(string path) where T : UnityEngine.Object {
-            if (resAssets == null) {
-                resAssets = new Dictionary<string, UnityEngine.Object>();
-            }
-
-            if (resAssets.ContainsKey(path)) {
-                return (T)resAssets[path];
-            }
-
+        T LoadResAsset<T>(string path)where T:Object {
             T value = Resources.Load<T>(path);
-
-            resAssets.Add(path, value);
-
             return value;
         }
 
         /// <summary>
-        /// 通过resources异步获取资源
+        /// 异步加载Res资源
         /// </summary>
         /// <typeparam name="T"></typeparam>
         /// <param name="path"></param>
+        /// <param name="callBack"></param>
         /// <returns></returns>
-        public void GetResAssetAsync<T>(string path, System.Action<T> callBack) where T : UnityEngine.Object {
-            StartCoroutine(OnGetResAssetAsync(path, callBack));
-        }
-
-        /// <summary>
-        /// 通过resources异步获取资源
-        /// </summary>
-        /// <typeparam name="T"></typeparam>
-        /// <param name="path"></param>
-        /// <returns></returns>
-        public IEnumerator OnGetResAssetAsync<T>(string path, System.Action<T> callBack) where T : UnityEngine.Object {
-            if (resAssets == null) {
-                resAssets = new Dictionary<string, UnityEngine.Object>();
-            }
-
-            if (resAssets.ContainsKey(path)) {
-                callBack((T)resAssets[path]);
-                yield break;
-            }
-
+        IEnumerator LoadResAssetAsync<T>(string path, System.Action<T> callBack) where T : Object {
             ResourceRequest req = Resources.LoadAsync<T>(path);
             yield return req;
-
             if (req.asset != null) {
-                resAssets.Add(path, req.asset);
                 callBack((T)req.asset);
-                yield break;
+            }
+            else {
+                callBack(null);
+            }
+        }
+        #endregion
+
+        /// <summary>
+        /// 检查并释放AssetBundle（当AssetBundle个数大于某数值时）
+        /// </summary>
+        void CheckAndReleaseAssetBundle() {
+            if (loading) { return; }
+
+            if (abLoadedDic.Count <= maxAssetBundleCount) {
+                return;
             }
 
-            callBack(default(T));
+            List<AssetBundleItem> list = abLoadedDic.Values.ToList();
 
+            //挑出没有被依赖的
+            List<string> templist = new List<string>();
+            foreach (AssetBundleItem item in list) {
+
+                bool beDepend = false;
+                foreach (AssetBundleItem item2 in list) {
+                    if (item == item2) { continue; }
+                    if (item2.IsDependAB(item.V_AssetName)) {
+                        beDepend = true;
+                        break;
+                    }
+                }
+
+                if (!beDepend) {
+                    templist.Add(item.V_AssetName);
+                }
+            }
+
+            //释放掉内存
+            foreach (string item in templist) {
+                abLoadedDic[item].V_AssetBundle.Unload(false);
+            }
         }
 
         /// <summary>
-        /// 加载本机目录下的文本
+        /// 切换场景时的AB清除
         /// </summary>
-        /// <param name="path"></param>
-        /// <returns></returns>
-        public string LoadText(string path) {
-            path = GetAssetPath() + "/" + path;
-            if (!File.Exists(path)) {
-                return string.Empty;
-            }
-
-            using (StreamReader sr=new StreamReader(path)) {
-                return sr.ReadToEnd();
-            }
-        }
-
-
-
-        string GetAssetPath() {
-            #if UNITY_ANDROID && !UNITY_EDITOR
-            return Application.persistentDataPath;
-            #elif UNITY_STANDALONE || UNITY_EDITOR
-            return Application.streamingAssetsPath;
-            #endif
-        }
-
         void Clear() {
-            resAssets.Clear();
-            loadedAssets.Clear();
+            //把AB内存已经释放掉的AssetBundleItem干掉
+            List<string> deleteList = new List<string>();
+            var item = abLoadedDic.GetEnumerator();
+            while (item.MoveNext()) {
+                if (item.Current.Value.V_AssetBundle == null) {
+                    deleteList.Add(item.Current.Key);
+                }
+            }
+            item.Dispose();
+
+            foreach (string item2 in deleteList) {
+                abLoadedDic.Remove(item2);
+            }
+
+            Resources.UnloadUnusedAssets();
         }
     }
 
-    public enum LoadMode {
+    enum EM_LoadMode {
         Resources=0,
         AssetBundle=1,
     }
 }
-

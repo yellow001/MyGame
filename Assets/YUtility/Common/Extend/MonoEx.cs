@@ -13,6 +13,16 @@ namespace YUtility.Common.Extend {
             EventMgr.Ins.AddTimeEvent(model);
         }
 
+        /// <summary>
+        /// 添加周期性事件
+        /// </summary>
+        /// <param name="mono"></param>
+        /// <param name="t">触发时间（秒）</param>
+        /// <param name="overDe">触发事件</param>
+        /// <param name="updateDe">触发期间的执行事件</param>
+        /// <param name="ignoreTime">是否忽略 Time.scaleTime</param>
+        /// <param name="count">执行次数（小于0表示循环执行）</param>
+        /// <param name="doNow">是否立即执行</param>
         public static void AddTimeEvent(this MonoBehaviour mono, float t, Action overDe, Action<float, float> updateDe, bool ignoreTime = false, int count = 1, bool doNow = false) {
             EventMgr.Ins.AddTimeEvent(new TimeEvent(t, overDe, ignoreTime, updateDe, count, doNow));
         }
